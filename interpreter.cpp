@@ -76,6 +76,8 @@ Frame::Frame(const MethodInfo& method, const ConstantPool& cp)
     
     local_variables.resize(code_attr.max_locals, 0);
     operand_stack.reserve(code_attr.max_stack);
+    
+    std::cout << "\t[STACK] Novo Frame Criado. Max Locals: " << code_attr.max_locals << ", Max Stack: " << code_attr.max_stack << std::endl;
 }
 
 // Funções de Gerenciamento de Heap (Modificado)
@@ -85,6 +87,8 @@ jref allocate_heap_object(int type, size_t size, std::string class_name) {
     obj.size = size; 
     obj.data.resize(size, 0); 
     obj.class_name = class_name; // Agora armazena o nome da classe
+    
+    std::cout << "\t[HEAP] Alocando Objeto. Tipo: " << type << ", Tamanho: " << size << ", Classe: " << class_name << std::endl;
 
     heap.push_back(std::move(obj));
     return (jref)heap.size() - 1; 
@@ -195,7 +199,7 @@ void handle_exception(Frame& frame, const std::string& msg, const std::string& e
                 
                 // Deveríamos empilhar o objeto da exceção.
                 // Criar um objeto dummy para a exceção
-                jref exception_ref = allocate_heap_object(0, 1, 0); 
+                jref exception_ref = allocate_heap_object(0, 1, exception_class_name); 
                 push_jword(frame, exception_ref);
                 
                 return; // Recuperado!
@@ -213,12 +217,38 @@ void handle_exception(Frame& frame, const std::string& msg, const std::string& e
 
 void run_frame(Frame& frame) {
     
+    // Helper para contar argumentos do descritor
+    auto count_args = [](const std::string& desc) -> int {
+        int count = 0;
+        int i = 0;
+        if (desc[i] != '(') return 0;
+        i++;
+        while (i < (int)desc.length() && desc[i] != ')') {
+            if (desc[i] == 'L') {
+                while (i < (int)desc.length() && desc[i] != ';') i++;
+                i++;
+            } else if (desc[i] == '[') {
+                while (i < (int)desc.length() && desc[i] == '[') i++;
+                if (desc[i] == 'L') {
+                    while (i < (int)desc.length() && desc[i] != ';') i++;
+                    i++;
+                } else {
+                    i++;
+                }
+            } else {
+                i++;
+            }
+            count++;
+        }
+        return count;
+    };
+
     while (frame.pc < frame.code->size()) {
         uint32_t offset = frame.pc;
         uint8_t opcode = fetch_u1(frame);
         
         // Output de Debug (Corretude)
-        std::cout << "\t[PC: " << std::setw(4) << offset << "] Opcode: 0x" 
+        std::cout << "\t[DISPATCH] PC: " << std::setw(4) << offset << " | Opcode: 0x" 
                   << std::hex << (int)opcode << std::dec;
         
         switch (opcode) {
@@ -418,7 +448,7 @@ void run_frame(Frame& frame) {
                 jref array_ref = allocate_heap_object(atype, (size_t)count, "[PRIMITIVE]"); 
                 push_jword(frame, array_ref);
                 
-                std::cout << " -> newarray (Type: " << (int)atype << ", Size: " << count << ", Ref: " << array_ref << ")" << std::endl;
+                std::cout << " -> [ARRAY] newarray (Type: " << (int)atype << ", Size: " << count << ", Ref: " << array_ref << ")" << std::endl;
                 break;
             }
 
@@ -439,7 +469,7 @@ void run_frame(Frame& frame) {
                 jref array_ref = allocate_heap_object(2, (size_t)count, array_class_name);
                 push_jword(frame, array_ref);
                 
-                std::cout << " -> anewarray #" << class_index << " (Class: " << class_name << ", Size: " << count << ", Ref: " << array_ref << ")" << std::endl;
+                std::cout << " -> [ARRAY] anewarray #" << class_index << " (Class: " << class_name << ", Size: " << count << ", Ref: " << array_ref << ")" << std::endl;
                 break;
             }
             
@@ -461,7 +491,7 @@ void run_frame(Frame& frame) {
                 jword length = (jword)heap[array_ref].size;
                 push_jword(frame, length);
                 
-                std::cout << " -> arraylength (Ref: " << array_ref << ", Size: " << length << ")" << std::endl;
+                std::cout << " -> [ARRAY] arraylength (Ref: " << array_ref << ", Size: " << length << ")" << std::endl;
                 break;
             }
 
@@ -478,7 +508,7 @@ void run_frame(Frame& frame) {
                 jword value = heap[array_ref].data[index];
                 push_jword(frame, value);
                 
-                std::cout << " -> iaload (Ref: " << array_ref << ", Index: " << index << ", Valor: " << (int32_t)value << ")" << std::endl;
+                std::cout << " -> [ARRAY] iaload (Ref: " << array_ref << ", Index: " << index << ", Valor: " << (int32_t)value << ")" << std::endl;
                 break;
             }
 
@@ -494,7 +524,7 @@ void run_frame(Frame& frame) {
 
                 heap[array_ref].data[index] = value;
                 
-                std::cout << " -> iastore (Ref: " << array_ref << ", Index: " << index << ", Salvou: " << (int32_t)value << ")" << std::endl;
+                std::cout << " -> [ARRAY] iastore (Ref: " << array_ref << ", Index: " << index << ", Salvou: " << (int32_t)value << ")" << std::endl;
                 break;
             }
             
@@ -683,6 +713,160 @@ void run_frame(Frame& frame) {
                 break;
             }
 
+            // --- NUMERICAL COMPARISONS (if<cond>) ---
+            case 0x99: // ifeq
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val == 0) {
+                    frame.pc += (offset_s16 - 3);
+                     std::cout << " -> ifeq (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> ifeq (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0x9a: // ifne
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val != 0) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> ifne (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> ifne (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0x9b: // iflt
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val < 0) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> iflt (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> iflt (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0x9c: // ifge
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val >= 0) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> ifge (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> ifge (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0x9d: // ifgt
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val > 0) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> ifgt (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> ifgt (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0x9e: // ifle
+            {
+                int32_t val = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val <= 0) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> ifle (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> ifle (FALSE)" << std::endl;
+                }
+                break;
+            }
+
+            // --- COMPARISONS (if_icmp<cond>) ---
+            case 0x9f: // if_icmpeq
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 == val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmpeq (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmpeq (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0xa0: // if_icmpne
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 != val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmpne (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmpne (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0xa1: // if_icmplt
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 < val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmplt (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmplt (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0xa2: // if_icmpge
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 >= val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmpge (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmpge (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0xa3: // if_icmpgt
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 > val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmpgt (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmpgt (FALSE)" << std::endl;
+                }
+                break;
+            }
+            case 0xa4: // if_icmple
+            {
+                int32_t val2 = (int32_t)pop_jword(frame);
+                int32_t val1 = (int32_t)pop_jword(frame);
+                int16_t offset_s16 = fetch_s2(frame);
+                if (val1 <= val2) {
+                    frame.pc += (offset_s16 - 3);
+                    std::cout << " -> if_icmple (JUMPED to " << frame.pc << ")" << std::endl;
+                } else {
+                    std::cout << " -> if_icmple (FALSE)" << std::endl;
+                }
+                break;
+            }
+
             // --- CONTROLE DE FLUXO (Mantidos) ---
             case 0xa7: // goto
             {
@@ -692,31 +876,7 @@ void run_frame(Frame& frame) {
                 break;
             }
 
-            // Helper para contar argumentos do descritor
-            auto count_args = [](const std::string& desc) -> int {
-                int count = 0;
-                int i = 0;
-                if (desc[i] != '(') return 0;
-                i++;
-                while (i < (int)desc.length() && desc[i] != ')') {
-                    if (desc[i] == 'L') {
-                        while (i < (int)desc.length() && desc[i] != ';') i++;
-                        i++;
-                    } else if (desc[i] == '[') {
-                        while (i < (int)desc.length() && desc[i] == '[') i++;
-                        if (desc[i] == 'L') {
-                            while (i < (int)desc.length() && desc[i] != ';') i++;
-                            i++;
-                        } else {
-                            i++;
-                        }
-                    } else {
-                        i++;
-                    }
-                    count++;
-                }
-                return count;
-            };
+
             
             // --- CHAMADAS DE MÉTODO ---
             case 0xb7: // invokespecial 

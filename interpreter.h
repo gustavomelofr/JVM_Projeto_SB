@@ -32,7 +32,7 @@ struct HeapObject {
     size_t size; // Tamanho total em unidades de jword (campos ou elementos do array).
     std::vector<jword> data; // Os dados reais (campos de instância, elementos).
     std::string class_name;  // Nome resolvido da classe (essencial para polimorfismo)
-    int type; // Recolorando type para baixo ou mantendo
+
 };
 
 // Estrutura do Frame de Pilha (Stack Frame)
